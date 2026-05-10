@@ -1,0 +1,47 @@
+# system
+.DS_Store
+
+# data (ignore raw large files, keep processed)
+final_project/data/*.nc
+
+# keep important datasets
+!final_project/data/corn_yields.csv
+!final_project/data/final_annual.csv
+!final_project/data/final_seasonal.csv
+
+# keep shapefile (needed for pipeline)
+!final_project/data/*.shp
+!final_project/data/*.dbf
+!final_project/data/*.shx
+!final_project/data/*.prj
+
+# python cache
+__pycache__/
+*.pyc
+
+# notebooks
+.ipynb_checkpoints
+notebooks/*_files/
+
+# large data files
+*.nc
+
+
+# temp / logs
+*.log
+*.tmp
+
+# optional
+cancer_mortality/
+mypypackage/
+lab4/data/
+
+lab2/other/
+lab3/other/
+parallelization/
+main
+
+*.o*
+*.out
+
+corn_data_collection_steps.docx 

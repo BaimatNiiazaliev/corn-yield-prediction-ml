@@ -1,0 +1,19 @@
+name: final_project
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas
+  - joblib
+  - plotly
+  - scipy
+  - ipykernel
+  - matplotlib
+  - seaborn
+  - umap-learn
+  - numpy
+  - scikit-learn
+  - statsmodels
+  - jupyterlab
+  - geopandas
+  - xarray

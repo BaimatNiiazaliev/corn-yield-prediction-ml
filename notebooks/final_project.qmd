@@ -1,0 +1,240 @@
+---
+title: "Climate & Yield"
+format: html
+---
+This script performs data manipulation and exploratory data analysis (EDA) on the climate and yield datasets. It reads in the datasets, cleans the yield data, merges it with the climate data, and creates visualizations to explore the relationships between climate variables and crop yields.
+
+## Research Question
+
+How do climate variables (e.g., temperature and water availability) affect crop yield, and do these relationships differ between annual and seasonal aggregations?
+
+We hypothesize that:
+1. The relationship between climate and yield is nonlinear
+2. Seasonal data captures stronger signals than annual averages
+
+Variables of interest:
+Maximum temperature (tmax) is expected to influence crop yield through heat stress, while actual evapotranspiration (AET) reflects water availability, which is critical for plant growth.
+
+## Limitations
+
+1. Aggregated data may mask extreme weather events
+2. Spatial heterogeneity across counties is not explicitly modeled
+3. Potential omitted variables (e.g., soil quality, irrigation, technology)
+
+```{python}
+import sys
+sys.path.append("..")
+import os
+```
+```{python}
+from matplotlib.pyplot import plot
+from scripts.load_clean_merge import load_data, clean_yield, merge_data
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+```
+
+
+```{python}
+files = [
+    "../data/cornbelt_climate_1990_2024.csv",
+    "../data/cornbelt_climate_seasonal_1990_2024.csv",
+    "../data/corn_yields.csv"
+]
+
+dfs = load_data(files)
+
+climate_annual = dfs[0]
+climate_seasonal = dfs[1]
+yield_raw = dfs[2]
+```
+```{python}
+yield_df = clean_yield(yield_raw)
+```
+
+```{python}
+final_annual = merge_data(climate_annual, yield_df)
+final_seasonal = merge_data(climate_seasonal, yield_df)
+
+print(final_annual.shape)
+print(final_seasonal.shape)
+```
+
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(16,6))
+
+# Annual
+corr_annual = final_annual.corr(numeric_only=True)
+sns.heatmap(corr_annual, ax=axes[0], cmap="coolwarm", annot=False)
+axes[0].set_title("Annual")
+
+# Seasonal
+corr_seasonal = final_seasonal.corr(numeric_only=True)
+sns.heatmap(corr_seasonal, ax=axes[1], cmap="coolwarm", annot=False)
+axes[1].set_title("Seasonal")
+
+plt.tight_layout()
+plt.show()
+```
+
+The weak linear correlations observed between climate variables and yield are not necessarily indicative of the absence of a relationship. Several factors may explain this:
+1. Strong time trends in yield due to technological progress
+2. Nonlinear effects of climate variables
+3. Aggregation effects, where annual averages mask extreme events
+
+Detrending the yield by removing the yearly mean allows us to isolate within-year variation, reducing the influence of long-term technological progress and focusing on climate-driven differences.
+```{python}
+final_annual["yield_detrended"] = final_annual["yield"] - final_annual.groupby("year")["yield"].transform("mean")
+final_seasonal["yield_detrended"] = final_seasonal["yield"] - final_seasonal.groupby("year")["yield"].transform("mean")
+print("\n=== Annual correlations ===")
+
+print(final_annual.corr(numeric_only=True)["yield_detrended"].sort_values())
+print("\n=== Seasonal correlations ===")
+
+final_seasonal.corr(numeric_only=True)["yield_detrended"].sort_values()
+
+```
+
+Detrending the yield data by removing the annual mean helps to isolate the effects of climate variables from overall time trends. After detrending, we can see that the correlations between climate variables and yield are still weak, suggesting that the relationships may be nonlinear or influenced by other factors. This motivates further analysis using binned plots to explore potential nonlinear relationships between climate variables and yield.
+
+```{python}
+plt.figure(figsize=(8,6))
+sns.regplot(x="aet", y="yield_detrended", data=final_seasonal)
+```
+
+The scatter plot with a fitted regression line suggests a weak linear relationship between AET and detrended yield, motivating further exploration of potential nonlinear patterns.
+
+```{python}
+import matplotlib.pyplot as plt
+import pandas as pd
+
+fig, axes = plt.subplots(1, 2, figsize=(14,6))
+
+# -----------------------------
+# Annual
+# -----------------------------
+final_annual["tmax_bin"] = pd.qcut(final_annual["tmax"], 20)
+
+final_annual.groupby("tmax_bin", observed=True)["yield"].mean().plot(
+    ax=axes[0]
+)
+
+axes[0].set_title("Annual: Yield vs Tmax")
+axes[0].tick_params(axis='x', rotation=45)
+
+# -----------------------------
+# Seasonal
+# -----------------------------
+final_seasonal["tmax_bin"] = pd.qcut(final_seasonal["tmax"], 20)
+
+final_seasonal.groupby("tmax_bin", observed=True)["yield"].mean().plot(
+    ax=axes[1]
+)
+
+axes[1].set_title("Seasonal: Yield vs Tmax")
+axes[1].tick_params(axis='x', rotation=45)
+
+# -----------------------------
+# layout
+# -----------------------------
+plt.tight_layout()
+plt.show()
+```
+
+The binned analysis reveals a clear inverted U-shaped relationship between temperature and yield. Yields increase with temperature up to an optimal range, after which they decline due to heat stress. This nonlinear pattern explains the near-zero linear correlation observed earlier. The effect appears slightly more pronounced in the seasonal data, suggesting that intra-annual temperature variation provides more informative signals. This highlights the importance of considering nonlinear relationships and seasonal dynamics when analyzing climate impacts on crop yields. The relationship appears more pronounced in the seasonal data, indicating that intra-seasonal variability provides more informative signals than annual aggregates.
+
+# Modeling Approach
+
+To evaluate model performance, we use a year-based cross-validation strategy, where models are trained on past years and tested on future years. 
+This approach better reflects real-world prediction settings and avoids data leakage across time.
+We use detrended yield as the target variable to isolate climate effects from long-term technological trends.
+A random forest model is employed to capture nonlinear relationships identified during the exploratory data analysis.
+
+# Feature Selection
+
+Feature selection is guided by both correlation analysis and domain knowledge. We prioritize variables that show stronger and more interpretable relationships with yield, while acknowledging that some excluded variables may still be important in nonlinear modeling frameworks.
+Actual evapotranspiration (AET) shows the strongest positive relationship with detrended yield (≈ 0.16 in seasonal data), indicating that water availability is a key driver of crop productivity.
+Precipitation (ppt) and minimum temperature (tmin) also exhibit moderate positive correlations, suggesting that both moisture and baseline temperature conditions contribute to yield variation.
+In contrast, variables such as vapor pressure deficit (vpd) and climatic water deficit (def) show consistent negative correlations (≈ -0.10), reflecting the adverse effects of drought stress on crop yield.
+Maximum temperature (tmax), however, shows near-zero correlation with yield. This is likely due to a nonlinear relationship, as evidenced by the inverted U-shaped pattern observed in the binned analysis. As a result, tmax is not
+well captured by linear correlation measures. 
+Similarly, potential evapotranspiration (pet) exhibits very weak correlation, suggesting limited additional explanatory power beyond other water-related variables.
+Overall, we prioritize variables that show stronger and more interpretable relationships with yield, while acknowledging that some excluded variables may still be important in nonlinear modeling frameworks.
+The stronger correlations observed in the seasonal dataset further support the idea that intra-seasonal climate variability provides more informative signals than annual aggregates.
+
+## Model Results
+
+We evaluate model performance using multiple metrics.  
+R² captures explained variance, while MAE and RMSE provide interpretable measures of prediction error.  RMSE additionally penalizes large errors, making it useful for assessing model robustness.
+
+```{python}
+summary = pd.read_csv("../results/summary.csv")
+display(summary)
+
+preds = pd.read_csv("../results/predictions.csv")
+plt.figure(figsize=(8,6))
+plt.scatter(preds["y_true"], preds["lin_pred"])
+plt.xlabel("Observed")
+plt.ylabel("Predicted (LR)")
+plt.title("Linear Regression: Predicted vs Observed")
+
+plt.plot([preds["y_true"].min(), preds["y_true"].max()],
+         [preds["y_true"].min(), preds["y_true"].max()],
+         color="red")
+
+plt.show()
+```
+
+The results indicate that Linear Regression slightly outperforms the Random Forest model across all evaluation metrics.
+
+While Random Forest is capable of capturing nonlinear relationships, it does not provide a performance improvement in this setting. This suggests that either the underlying relationships are approximately linear or that the available features do not contain sufficient nonlinear signal for the model to exploit.
+
+Overall model performance is moderate (R² ≈ 0.4), indicating that climate variables explain a meaningful but limited portion of yield variation. The remaining variation is likely driven by unobserved factors such as soil quality, management practices, and technological improvements.
+Despite evidence of nonlinear relationships in the exploratory analysis (e.g., the inverted U-shape between temperature and yield), the Random Forest model does not outperform the linear model. This may indicate that the nonlinear patterns are not strong enough or are obscured by aggregation and noise in the data.
+
+```{python}
+plt.figure(figsize=(8,6))
+plt.scatter(preds["y_true"], preds["rf_pred"])
+plt.xlabel("Observed")
+plt.ylabel("Predicted (RF)")
+plt.title("Random Forest: Predicted vs Observed")
+
+
+plt.plot([preds["y_true"].min(), preds["y_true"].max()],
+         [preds["y_true"].min(), preds["y_true"].max()],
+         color="red")
+
+plt.show()
+```
+
+```{python}
+plt.figure(figsize=(8,6))
+plt.scatter(preds["lin_pred"], preds["rf_pred"])
+plt.xlabel("Linear Regression Predictions")
+plt.ylabel("Random Forest Predictions")
+plt.title("LR vs RF Predictions")
+
+plt.show()
+```
+
+```{python}
+residuals = preds["y_true"] - preds["lin_pred"]
+plt.figure(figsize=(8,6))
+plt.scatter(preds["lin_pred"], residuals)
+plt.axhline(0, color="red")
+plt.xlabel("Predicted")
+plt.ylabel("Residuals")
+plt.title("Residual Plot (LR)")
+plt.show()
+```
+The predicted vs observed plots show that both models perform reasonably well for mid-range values, but struggle to accurately predict extreme outcomes. In particular, both models tend to shrink predictions toward the mean, underpredicting high values and overpredicting low values.
+
+The Random Forest model does not show a clear improvement over Linear Regression, as their predictions are highly similar. This is further confirmed by the strong linear relationship between their predictions.
+
+Overall, this suggests that while nonlinear patterns may exist in the data, they are either weak or not sufficiently captured by the available features. The remaining prediction error likely reflects missing variables or noise in the data.
+The residual plot shows that the model errors are roughly centered around zero, indicating no strong systematic bias in predictions. However, the spread of residuals increases for certain ranges of predicted values, suggesting heteroscedasticity.
+
+In particular, larger errors are observed for more extreme values, indicating that the model struggles to accurately capture high and low outcomes. This is consistent with earlier observations that the model tends to shrink predictions toward the mean.
+
+Overall, while the model performs reasonably well on average, its predictive accuracy is not uniform across the data, highlighting limitations in capturing extreme variability.
